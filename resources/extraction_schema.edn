@@ -1,0 +1,36 @@
+;;;; ================= EXTRACTION SPEC TEMPLATE ===================
+;; Used for extracting and transforming data from excel files
+;;
+{:sheet-name  "Correct sheet name"
+ ;; `:extraction-schema` is a collection of column extraction spec
+ ;;     (specify which columns to extract, transform, group)
+ :extraction-schema
+ ;; `:column` - excel column name A-Z, AA-ZZ
+ ;; `:map-to` - mapping name
+ ;; `:is`     - symbol of arbitrary clojure standard predicate function
+ ;;           used to validate cell-value.
+ ;;           rows with invalid cells will be removed from result
+ ;; `:group`  - if cell is grouping column  - [:group true]
+ ;;             only 1st row with new group has value, rest rows not.
+ ;;             this flag enable filling that empty cells.
+ ;; `:transform` - symbol of arbitrary clojure fn.
+ ;;             * string?, int?, float?, inst?, boolean?,
+ ;;             * pos-int?, neg-int?, neg?, zero? nil?,
+ ;;           also custom fn from this tool:
+ ;;             * parse-int
+ ;;             * str-extract-int - find and extract int from string
+ ;;             * str-extract-datetime - find and extract datetime from string
+ ;; `:env`    - extra column, get it from env map
+ ;;           there are default value in it:
+ ;;             * filename - excel file name
+ ;; `:row`    - excel row. used for extra column by [column, row]
+  [{:column :A :map-to :town :is string? :group true}
+   {:column :B :map-to :street-num :is string? :transform str-extract-int}
+   {:column :C :map-to :file-datetime :is string? :transform str-extract-datetime :row 0}
+   {:env :filename :map-to :filename}]
+ ;; data-rows range should be [start end] or only [start]
+ :data-rows-range [6]
+ ;; remove-row-fn is fn with signature (fn [row] pred?):
+ ;; filter incorrect or unneeded rows. (fn [row] pred?)
+ ;; when returns true - row will be removed from result
+ :remove-row-fn (fn [row] (nil? (:tank-num row)))}
