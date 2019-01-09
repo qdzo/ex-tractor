@@ -7,24 +7,29 @@
     [qdzo.ex-tractor.utils :refer [resolve-fn]]
     [qdzo.ex-tractor.log :as l]))
 
+
 (defn extraction-spec-template
   "Reads spec-template file from resources" []
   (slurp (io/resource "extraction_schema.edn")))
+
 
 (defn parse-column-mappings [schema]
   (->> (remove :env schema)
        (map (juxt :column :map-to))
        (into (sorted-map))))
 
+
 (defn parse-column-schema [schema]
   (->> (filter :is schema)
        (map #(update % :is resolve-fn))
        (map (juxt :map-to :is)) (into {})))
 
+
 (defn parse-grouped-columns [schema]
   (->> (filter :group schema)
        (map :map-to)
        (into #{})))
+
 
 (defn parse-extra-columns [schema]
   (->> (filter #(or (:row %) (:env %)) schema)
@@ -32,15 +37,18 @@
        (map (juxt :map-to #(select-keys % [:row :column :env])))
        (into {})))
 
+
 (defn parse-transforms [schema]
   (->> (filter :transform schema)
        (map #(update % :transform resolve-fn))
        (map (juxt :map-to :transform))
        (into {})))
 
+
 (defn parse-sorting [schema]
   (-> (cons :row/id (map :map-to schema))
       (zipmap (range))))
+
 
 (defn parse-extraction-schema [schema]
   {:column-mappings (parse-column-mappings schema)
@@ -55,7 +63,9 @@
   (merge (dissoc spec :extraction-schema)
          (parse-extraction-schema (:extraction-schema spec))))
 
+
 ;; ------------------------------ TRANSFORMATIONS ---------------------
+
 
 (defn bind-row-id-meta-to-rows
   "Binds row/id metadata to rows"
@@ -68,6 +78,7 @@
 
 ;(meta (first (bind-row-id-meta-to-rows [[] []])))
 ;(meta (second (bind-row-id-meta-to-rows [[] []])))
+
 
 (defn materialize-row-meta
   "Fill `row-id` and other fields from `row` meta-data.

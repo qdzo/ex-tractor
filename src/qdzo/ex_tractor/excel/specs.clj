@@ -1,23 +1,28 @@
 (ns qdzo.ex-tractor.excel.specs
   (:require [qdzo.ex-tractor.excel :as excel]
             [clojure.set :as cset]
-            [clojure.spec.alpha :as spec])
+            [clojure.spec.alpha :as spec]
+            [clojure.spec.gen.alpha :as gen])
   (:import [java.io File]))
 
 
+(defn gen [spec]
+  (gen/generate (spec/gen spec)))
+
 (set! *warn-on-reflection* true)
 
-;; row is pure map
-(spec/def ::excel/row map?)
+(spec/def ::excel/env-name
+  (spec/or :k keyword? :s symbol?))
 
-;; sheet is just rows list
-(spec/def ::excel/sheet
-  (spec/coll-of ::excel/row))
 
-;; environment map
-(spec/def ::excel/env map?)
+(spec/def ::excel/env-val any?)
 
-(spec/def ::excel/sheet-column-name
+
+(spec/def ::excel/env
+  (spec/map-of ::excel/env-name ::excel/env-val))
+
+
+(spec/def ::excel/excel-sheet-column-name
   (sorted-set
    :A  :B  :C  :D  :E  :F  :G  :H  :I  :J  :K  :L  :M  :N  :O  :P  :Q  :R  :S  :T  :U  :V  :W  :X  :Y  :Z
    :AA :AB :AC :AD :AE :AF :AG :AH :AI :AJ :AK :AL :AM :AN :AO :AP :AQ :AR :AS :AT :AU :AV :AW :AX :AY :AZ
@@ -25,56 +30,147 @@
    :CA :CB :CC :CD :CE :CF :CG :CH :CI :CJ :CK :CL :CM :CN :CO :CP :CQ :CR :CS :CT :CU :CV :CW :CX :CY :CZ))
 
 
-(spec/def ::excel/column-name any?)
+(spec/def ::excel/cell-value
+  (spec/or :nil nil?
+           :boolean boolean?
+           :float float?
+           :string string?))
 
-(spec/def ::excel/column-mappings
-  (spec/map-of ::excel/sheet-column-name
-               ::excel/column-name))
 
-(spec/fdef ::excel/column-predicate
-  :args (spec/cat :column-value any?)
-  :ret boolean?)
+(spec/def ::excel/column-mapped-name
+  (spec/or :sym symbol?
+           :key keyword?
+           :str string?))
 
-(spec/def ::excel/row-spec
-  (spec/map-of any?
-               ::excel/column-predicate))
+
+(spec/def ::excel/sheet-row map?)
+
+
+(spec/def ::excel/sheet
+  (spec/coll-of ::excel/sheet-row :into []))
+
+
+(spec/def :extra-columns.coordinate.env/env ::excel/env-name)
+
+
+(spec/def :extra-columns.coordinate/env
+  (spec/keys :req-un [:extra-columns.coordinate.env/env]))
+
+
+(spec/def :extra-columns.coordinate.cell/row pos-int?)
+
+
+(spec/def :extra-columns.coordinate.cell/column
+  ::excel/column-mapped-name)
+
+
+(spec/def :extra-columns.coordinate/cell
+  (spec/keys :req-un [:extra-columns.coordinate.cell/row
+                      :extra-columns.coordinate.cell/column]))
+
+
+(spec/def :extra-columns/coordinate
+  (spec/or :env :extra-columns.coordinate/env
+           :cell :extra-columns.coordinate/cell))
+
+
+(spec/def :sheet-extraction-spec/extra-columns
+  (spec/map-of ::excel/column-mapped-name
+               :extra-columns/coordinate))
+
+
+(spec/fdef ::excel/cell-predicate
+           :args (spec/cat :value ::excel/cell-value)
+           :ret boolean?)
+
+
+(spec/def ::excel/fn
+  (spec/with-gen fn?
+    #(spec/gen #{int? float? int float identity})))
+
+
+(def fn-forms
+  #{'(fn [] nil)
+    '(fn [x] x)
+    '(fn [& xs] true)
+    '(fn [& xs] xs)})
+
+
+(spec/def ::excel/fn-form
+  (spec/with-gen (spec/and list? #(= (first %) 'fn))
+                 #(spec/gen fn-forms)))
+
+
+(spec/def ::excel/fn-like
+    (spec/or :fn ::excel/fn
+             :form ::excel/fn-form
+             :symbol symbol?))
+
+
+  (spec/def :sheet-extraction-spec/column-mappings
+  (spec/map-of ::excel/excel-sheet-column-name
+               ::excel/column-mapped-name))
+
+
+(spec/def :sheet-extraction-spec/column-schema
+  (spec/map-of ::excel/column-mapped-name
+               ::excel/cell-predicate))
+
+
+(spec/def :sheet-extraction-spec/grouped-columns
+  (spec/coll-of ::excel/column-mapped-name :into #{}))
+
 
 (spec/def ::excel/sheet-name string?)
 
+
 (spec/def ::excel/sheet-spec
-  (spec/keys :req-un [::excel/sheet-name ::excel/column-mappings]))
+  (spec/keys :req-un [::excel/sheet-name]))
 
-(spec/def ::excel/grouped-columns set?)
 
-(spec/fdef ::excel/extra-column-extractor
-  :args (spec/cat :sheet ::excel/sheet :env ::excel/env)
-  :ret some?)
+(spec/def :sheet-extraction-spec.data-rows-range/start
+  (spec/cat :start pos-int?))
 
-(spec/def ::excel/extra-columns
-  (spec/map-of some? ::excel/extra-column-extractor))
 
-(spec/def ::excel/data-rows-range
-  (spec/or :start (spec/cat :start int?)
-           :start+end (spec/cat :start int? :end int?)))
+(spec/def :sheet-extraction-spec.data-rows-range/start+end
+  (spec/and (spec/cat :start pos-int? :end pos-int?)
+            #(< (:start %) (:end %))))
 
-(spec/def ::excel/transforms
-  (spec/map-of some? fn?))
+
+(spec/def :sheet-extraction-spec/data-rows-range
+  (spec/or
+    :start     :sheet-extraction-spec.data-rows-range/start
+    :start+end :sheet-extraction-spec.data-rows-range/start+end))
+
+
+(spec/def :sheet-extraction-spec/transforms
+  (spec/map-of ::excel/column-mapped-name
+               ::excel/fn-like))
+
 
 (spec/fdef ::excel/row-predicate
-  :args (spec/cat :row ::excel/row)
+  :args (spec/cat :row ::excel/sheet-row)
   :ret boolean?)
 
-(spec/def ::excel/remove-row-fn ::excel/row-predicate)
 
-(spec/def ::excel/sheet-transformations
-  (spec/keys :req-un [::excel/grouped-columns
-                      ::excel/extra-columns
-                      ::excel/data-rows-range
-                      ::excel/transforms
-                      ::excel/remove-row-fn]))
+(spec/def :sheet-extraction-spec/remove-row-fn
+  ::excel/row-predicate)
+
+
+(spec/def ::excel/sheet-extraction-spec
+  (spec/keys :req-un [:sheet-extraction-spec/column-mappings]
+             :opt-un [:sheet-extraction-spec/grouped-columns
+                      :sheet-extraction-spec/extra-columns
+                      :sheet-extraction-spec/data-rows-range
+                      :sheet-extraction-spec/transforms
+                      :sheet-extraction-spec/remove-row-fn]))
+
+
+;(gen ::excel/sheet-extraction-spec)
+
 
 (spec/def ::excel/sheet-spec+transformations
-  (spec/merge ::excel/sheet-spec ::excel/sheet-transformations))
+  (spec/merge ::excel/sheet-spec ::excel/sheet-extraction-spec))
 
 ;; :doc/sheets
 ;; :doc/sheet
@@ -97,26 +193,36 @@
 ;;  :transform-fn str-extract-datetime
 ;;  :row-id 0 }
 
-(spec/def  :extraction-schema/column     ::excel/column-name)
-(spec/def  :extraction-schema/map-to     any?)
-(spec/def  :extraction-schema/is         symbol?)
-(spec/def  :extraction-schema/transform  symbol?)
-(spec/def  :extraction-schema/row        pos-int?)
-(spec/def  :extraction-schema/group      true?)
-(spec/def  :extraction-schema/env        keyword?)
+(spec/def  :extraction-schema.item/column     ::excel/excel-sheet-column-name)
+(spec/def  :extraction-schema.item/map-to     ::excel/column-mapped-name)
+(spec/def  :extraction-schema.item/is         ::excel/cell-predicate)
+(spec/def  :extraction-schema.item/transform  ::excel/fn-like)
+(spec/def  :extraction-schema.item/row        :extra-columns.coordinate.cell/row)
+(spec/def  :extraction-schema.item/group      true?)
+(spec/def  :extraction-schema.item/env        ::excel/env-name)
+
 
 (spec/def :extraction-schema/item
-  (spec/keys :opt-un [:extraction-schema/column
-                      :extraction-schema/map-to
-                      :extraction-schema/is
-                      :extraction-schema/transform
-                      :extraction-schema/row
-                      :extraction-schema/group
-                      :extraction-schema/env]))
+  (spec/keys :req-un [:extraction-schema.item/column
+                      :extraction-schema.item/map-to]
+             :opt-un [:extraction-schema.item/is
+                      :extraction-schema.item/transform
+                      :extraction-schema.item/row
+                      :extraction-schema.item/group
+                      :extraction-schema.item/env]))
 
 
-(spec/def :extraction-schema/schema
-  (spec/coll-of :extraction-schema/item))
+(spec/def :extraction-schema/extraction-schema
+  (spec/coll-of :extraction-schema/item :into []))
+
+
+(spec/def ::excel/extraction-schema
+  (spec/keys :req-un [:extraction-schema/extraction-schema]))
+
+
+(spec/def ::excel/sheet-spec+extraction-schema
+  (spec/merge ::excel/sheet-spec ::excel/extraction-schema))
+
 
 (spec/fdef excel/parse-extraction-schema
            :args (spec/cat :schema :extraction-schema/schema)
@@ -134,14 +240,9 @@
 
 
 (spec/fdef excel/take-range
-           :args (spec/cat :range
-                           (spec/or
-                             :only-start
-                             (spec/cat :start pos-int?)
-                             :start+end
-                             (spec/and (spec/cat :start pos-int? :end pos-int?)
-                                       #(< (:start %) (:end %))))
-                           :coll coll?)
+           :args (spec/cat
+                   :range :sheet-extraction-spec/data-rows-range
+                   :coll coll?)
            :ret vector?
            :fn #(let [init-count (-> % :args :coll count)
                       ret-count (-> % :ret count)]
@@ -149,7 +250,7 @@
 
 
 (spec/fdef ::excel/get-extra-columns
-  :args (spec/cat :extra-columns ::excel/extra-columns
+  :args (spec/cat :extra-columns :extraction-schema/extra-columns
                   :sheet ::excel/sheet
                   :env ::excel/env)
   :ret map?
@@ -164,9 +265,9 @@
 
 
 (spec/fdef excel/transform-columns
-  :args (spec/cat :transforms ::excel/transforms
+  :args (spec/cat :transforms :extraction-schema/transforms
                   :row ::excel/row)
-  :ret ::excel/row
+  :ret ::excel/sheet-row
   :fn #(= (-> % :args :row keys)
           (-> % :ret keys)))
 
@@ -181,13 +282,13 @@
   (spec/coll-of ::excel/column-error))
 
 (spec/fdef excel/check-row
-  :args (spec/cat :row ::excel/row
+  :args (spec/cat :row ::excel/sheet-row
                   :spec ::excel/row-spec)
   :ret (spec/or :ok nil?
                 :errors ::excel/row-errors))
 
 (spec/fdef excel/check-row-spec-and-then-run-pred
-  :args (spec/cat :row ::excel/row
+  :args (spec/cat :row ::excel/sheet-row
                   :spec ::excel/row-spec
                   :pred ::excel/row-predicate)
   :ret boolean?)
@@ -211,9 +312,9 @@
                 (java.io.File. "data/examples/gpn_report_1608.xlsx")})))
 
 (spec/fdef excel/read-excel-sheet-from-file
-  :args (spec/cat :excelfile  ::excel/excel-file
+  :args (spec/cat :excelfile ::excel/excel-file
                   :sheet-name ::excel/sheet-name
-                  :column-mappings ::excel/column-mappings)
+                  :column-mappings :extraction-schema/column-mappings)
   :ret ::excel/sheet)
 
 (spec/fdef excel/extract-data-from-excel-file
