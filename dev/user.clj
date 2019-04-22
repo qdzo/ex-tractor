@@ -1,12 +1,12 @@
 (ns user
   (:require [orchestra.spec.test :as st]))
 
-(defn instument []
+(defn instrument []
   (st/instrument))
 
 (defn unstument []
   (st/unstrument))
 
 (defn reinstument []
-  (instrument-all)
-  (unstument-all))
+  (unstument)
+  (instrument))
