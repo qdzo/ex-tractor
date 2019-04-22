@@ -19,10 +19,23 @@
        (into (sorted-map))))
 
 
-(defn parse-column-schema [schema]
+(defn parse-column-schema
+  "transforms
+    [{:is 'int?    :map-to :age}
+     {:is 'string? :map-to :name}]
+  into
+     {:name #'clojure.core/string?
+      :age  #'clojure.core/int?}"
+  [schema]
   (->> (filter :is schema)
        (map #(update % :is resolve-fn))
-       (map (juxt :map-to :is)) (into {})))
+       (map (juxt :map-to :is))
+       (into {})))
+
+;; (= (parse-column-schema
+;;     [{:is 'int? :map-to "player"}
+;;      {:is 'string? :map-to "A"}])
+;;    {"player" `int? "A" string?})
 
 
 (defn parse-grouped-columns [schema]
@@ -204,41 +217,20 @@
                       sorting
                       remove-row-fn] :as sheet-spec} env]
   (l/log2 "All rows: [" (count sheet-rows) "]")
-  (let [remove-row-fn (resolve-fn remove-row-fn)
-
-        grouped+extra-columns
-        (apply conj grouped-columns (keys extra-columns))
-
-        columns-spec-1-part
-        (apply dissoc column-spec grouped+extra-columns)
-
-        columns-spec-2-part
-        (select-keys column-spec grouped+extra-columns)
-
-        extra-column-values
-        (get-extra-columns extra-columns sheet-rows env)
-
-        rows (bind-row-id-meta-to-rows sheet-rows)
-
+  (let [remove-row-fn               (resolve-fn remove-row-fn)
+        grouped+extra-columns       (apply conj grouped-columns (keys extra-columns))
+        columns-spec-1-part         (apply dissoc column-spec grouped+extra-columns)
+        columns-spec-2-part         (select-keys column-spec grouped+extra-columns)
+        extra-column-values         (get-extra-columns extra-columns sheet-rows env)
+        rows                        (bind-row-id-meta-to-rows sheet-rows)
         ;; TODO maybe check extra-columns spec here? +check once. -what to do if spec fails here?
-        rows (take-range data-rows-range rows)
-        _ (l/log2 "Selected (by data-rows-range) rows: ["
-                  (count rows) "]")
-
-        check-and-filter-row
-        #(check-row-spec-and-then-run-pred %
-                                           columns-spec-1-part
-                                           (complement remove-row-fn))
-
-        rows (filter check-and-filter-row rows)
-        _ (l/log2 "Cleaned (by check-row-spec and remove-row-fn) rows: ["
-                  (count rows) "]")
-
+        rows                        (take-range data-rows-range rows)
+        _                           (l/log2 "Selected (by data-rows-range) rows: [" (count rows) "]")
+        check-and-filter-row        #(check-row-spec-and-then-run-pred % columns-spec-1-part (complement remove-row-fn))
+        rows                        (filter check-and-filter-row rows)
+        _                           (l/log2 "Cleaned (by check-row-spec and remove-row-fn) rows: [" (count rows) "]")
         empty-rows []
-
-        initial-group-column-values
-        (-> (first rows) (select-keys grouped-columns))]
-
+        initial-group-column-values (-> (first rows) (select-keys grouped-columns))]
     (->> rows
          (reduce fill-group-columns-reduction
                  [empty-rows initial-group-column-values])
@@ -248,6 +240,114 @@
          (map #(transform-columns transforms %))
          (mapv #(custom-sorted-map sorting %)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; {:rows :spec :env}
+
+(defn prepare-process
+  [{:keys [sheet-spec] :as ctx}]
+  (let [{:keys [remove-row-fn grouped-columns extra-columns column-spec]} sheet-spec
+        grouped+extra-columns (apply conj grouped-columns (keys extra-columns))]
+    (update ctx :sheet-spec merge
+            {:remove-row-fn       (resolve-fn remove-row-fn)
+             :columns-spec-1-part (apply dissoc column-spec grouped+extra-columns)
+             :columns-spec-2-part (select-keys column-spec grouped+extra-columns)})))
+
+(defn prepare-extra-columns-values
+  [{:keys [sheet-spec sheet-rows env] :as ctx}]
+  (assoc-in ctx [:sheet-spec :extra-column-values]
+            (get-extra-columns (:extra-columns sheet-spec)
+                               sheet-rows env)))
+
+(defn prepare-rows [ctx]
+  (update ctx :sheet-rows bind-row-id-meta-to-rows))
+
+#_(->> {:sheet-rows [{:a 1} {:a 1} {:a 1}]}
+     prepare-rows
+     :sheet-rows
+     (mapv meta)
+     (= [{:row/id 1} {:row/id 2} {:row/id 3}]))
+
+
+;; TODO maybe check extra-columns spec here? +check once. -what to do if spec fails here?
+(defn narrow-rows-to-range
+  [{:keys [sheet-spec] :as ctx}]
+  (update ctx :sheet-rows
+          #(take-range (:data-rows-range sheet-spec) %)))
+
+#_(-> {:sheet-spec {:data-rows-range [5]} :sheet-rows (vec (repeat 10 :k))}
+    narrow-rows-to-range
+    :sheet-rows
+    (= [:k :k :k :k :k]))
+
+#_(l/log2 "Selected (by data-rows-range) rows: ["
+          (count rows) "]")
+
+(defn check-and-filter-rows
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [columns-spec-1-part remove-row-fn]} sheet-spec
+        remove-row-fn (complement remove-row-fn) ;; <-- `remove-row-fn` returns `true` to remove row. we need `false`
+        check-and-filter-row #(check-row-spec-and-then-run-pred % columns-spec-1-part remove-row-fn)
+        filtered-rows (filter check-and-filter-row sheet-rows)]
+    (l/log2 "Cleaned (by check-row-spec and remove-row-fn) rows: [" (count filtered-rows) "]")
+    (assoc ctx :sheet-rows filtered-rows)))
+
+
+(defn fill-group-column-values
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [grouped-columns]} sheet-spec
+        initial-group-column-values (select-keys (first sheet-rows) grouped-columns)
+        initial [[] initial-group-column-values]]
+    ;; reduce returns [rows group-column-values] - we need only rows
+    (assoc ctx :sheet-rows
+           (first (reduce fill-group-columns-reduction initial sheet-rows)))))
+
+
+(defn merge-extra-column-values
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [extra-column-values]} sheet-spec]
+    (assoc ctx :sheet-rows
+           (map #(merge % extra-column-values) sheet-rows))))
+
+
+(defn check-rows-with-2nd-spec-part
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [columns-spec-2-part]} sheet-spec]
+    (assoc ctx :sheet-rows
+           (remove #(check-row % columns-spec-2-part) sheet-rows))))
+
+
+(defn transform-column-values
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [transforms]} sheet-spec]
+    (assoc ctx :sheet-rows
+           (map #(transform-columns transforms %) sheet-rows))))
+
+
+(defn sort-columns
+  [{:keys [sheet-rows sheet-spec] :as ctx}]
+  (let [{:keys [sorting]} sheet-spec]
+    (assoc ctx :sheet-rows
+           (mapv #(custom-sorted-map sorting %) sheet-rows))))
+
+
+(defn extract-data-from-sheet-new
+  "Extract and transform  data from `sheet` according `sheet-spec`,
+   which defines data transformations and selections"
+  [{:keys [sheet-rows sheet-spec env] :as ctx}]
+  (l/log2 "All rows: [" (count sheet-rows) "]")
+  (-> ctx
+      (prepare-process)
+      (prepare-extra-columns-values)
+      (prepare-rows)
+      (narrow-rows-to-range)
+      (check-and-filter-rows)
+      (fill-group-column-values)
+      (merge-extra-column-values)
+      (transform-column-values)
+      (sort-columns)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn read-excel-sheet-from-file
   "Read `sheet-name` sheet from `excel-file`.
