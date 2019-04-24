@@ -226,7 +226,7 @@
 
 (spec/fdef excel/parse-extraction-schema
            :args (spec/cat :schema :extraction-schema/schema)
-           :ret ::excel/sheet-spec+transformations)
+           :ret ::excel/sheet-extraction-spec)
 
 ;; ------------------- utils func --------------------
 
