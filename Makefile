@@ -1,6 +1,6 @@
 .PHONY : jar bin clean run run-bin package archive-project all native-bin make-test-files jvm lint test
 
-APP=qdzo.ex-tractor-0.1.0-SNAPSHOT
+APP=ex-tractor-0.1.0-SNAPSHOT
 FAT_JAR_FILE=$(APP)-standalone.jar
 BIN_FILE=ex-tractor
 JAR_FILE=$(BIN_FILE).jar
