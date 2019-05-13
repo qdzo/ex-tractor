@@ -227,7 +227,7 @@
         rows                        (take-range data-rows-range rows)
         _                           (l/log2 "Selected (by data-rows-range) rows: [" (count rows) "]")
         check-and-filter-row        #(check-row-spec-and-then-run-pred % columns-spec-1-part (complement remove-row-fn))
-        rows                        (filter check-and-filter-row rows)
+        ;; rows                        (filter check-and-filter-row rows)
         _                           (l/log2 "Cleaned (by check-row-spec and remove-row-fn) rows: [" (count rows) "]")
         empty-rows []
         initial-group-column-values (-> (first rows) (select-keys grouped-columns))]
@@ -235,6 +235,7 @@
          (reduce fill-group-columns-reduction
                  [empty-rows initial-group-column-values])
          (first) ;; reduce returns [rows group-column-values] - we need only rows
+         (filter check-and-filter-row rows)
          (map #(merge % extra-column-values))
          (remove #(check-row % columns-spec-2-part))
          (map #(transform-columns transforms %))
@@ -341,9 +342,10 @@
       (prepare-extra-columns-values)
       (prepare-rows)
       (narrow-rows-to-range)
-      (check-and-filter-rows)
       (fill-group-column-values)
+      (check-and-filter-rows)
       (merge-extra-column-values)
+      (check-rows-with-2nd-spec-part)
       (transform-column-values)
       (sort-columns)))
 
